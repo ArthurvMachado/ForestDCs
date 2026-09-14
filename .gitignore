@@ -5,14 +5,13 @@ __pycache__/
 *.egg-info/
 
 # Resultados e dados gerados pelo pipeline (versione seletivamente se quiser)
-results/
+results/*
 data/raw/*
 data/interim/*
 !data/raw/.gitkeep
 !data/interim/.gitkeep
 
 # Artefatos do LIMA
-external/LIMA/output.txt
 external/LIMA/target/
 
 # Diversos
