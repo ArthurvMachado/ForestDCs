@@ -142,16 +142,6 @@ def generate_global_dcs(
     return dcs
 
 
-# def filter_dcs_for_group(global_dcs: list[str], candidate_columns: list[str],
-#                           dc_columns_cache: dict[str, set[str]]) -> list[str]:
-#     """
-#     Mantém apenas as DCs cujas colunas usadas estão inteiramente contidas em
-#     `candidate_columns` (as colunas do caminho de decisão até aquela folha).
-#     """
-#     allowed = set(candidate_columns)
-#     return [dc for dc in global_dcs if dc_columns_cache[dc] <= allowed]
-
-
 def generate_dcs_for_support(
     support: list[dict],
     x_train: pd.DataFrame,

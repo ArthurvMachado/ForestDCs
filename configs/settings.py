@@ -33,7 +33,7 @@ SAMPLE_SIZE = None  # None -> usa len(x_train) automaticamente
 SEED = 42
 TARGET_COLUMN = None  # None para não incluir o rótulo no CSV do treino
 TIMEOUT_S = None  # sem limite por padrão (roda sobre o treino inteiro)
-DEBUG = True  # imprime stdout/stderr do Java e mantém o CSV gerado em data/interim
+DEBUG = False  # imprime stdout/stderr do Java e mantém o CSV gerado em data/interim
 
 # ── Random Forest ───────────────────────────────────────────────
 N_ESTIMATORS = 100
@@ -45,8 +45,6 @@ POSITIVE_LABEL = 1  # Alvo
 NEGATIVE_LABEL = 0  # Não Alvo
 LABEL_NAMES = {0: "Não Alvo", 1: "Alvo"}
 
-# Datasets sem colunas identificadoras/categóricas (ex: Iris) não precisam
-# disso, mas outros UCI ids podem precisar preencher estas listas.
 DROP_COLUMNS: list[str] = []
 CATEGORICAL_COLUMNS: list[str] = []
 
