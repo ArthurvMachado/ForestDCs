@@ -13,6 +13,7 @@ data/interim/*
 
 # Artefatos do LIMA
 external/LIMA/target/
+output.txt
 
 # Diversos
 .DS_Store

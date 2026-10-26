@@ -122,15 +122,29 @@ def run_dc_filtered_prediction(
     return results
 
 
-def run_uci_experiment(uci_id, thresholds=settings.THRESHOLDS) -> list[dict]:
+def run_uci_experiment(
+    uci_id,
+    thresholds=settings.THRESHOLDS,
+    save_support: bool | None = None,
+    check_violations: bool | None = None,
+) -> list[dict]:
     """
     Treina o modelo e monta o `support` UMA ÚNICA VEZ para este `uci_id`
     (accuracy/precision/recall/F1 não dependem do threshold do LIMA).
     Em seguida, para cada valor em `thresholds`, roda o LIMA de novo só
     para gerar as DCs correspondentes -- só isso muda entre as rodadas.
 
+    `save_support`: grava `dc_filter_support.json` por threshold (arquivo muito
+    grande em datasets grandes). None -> usa `settings.SAVE_SUPPORT`.
+    `check_violations`: confere as violações das DCs no treino e no teste
+    (ETAPA 6.5, só informativa). None -> usa `settings.CHECK_VIOLATIONS`.
+
     Retorna uma lista de dicts, um por threshold testado.
     """
+    if save_support is None:
+        save_support = settings.SAVE_SUPPORT
+    if check_violations is None:
+        check_violations = settings.CHECK_VIOLATIONS
     df, target = load_dataset(uci_id)
     x_raw, x_encoded, y = prepare_features(df, target)
     x_train_raw, x_train_encoded, x_test_raw, x_test_encoded, y_train, y_test = split_dataset(
@@ -174,13 +188,18 @@ def run_uci_experiment(uci_id, thresholds=settings.THRESHOLDS) -> list[dict]:
             support, x_train_raw, y_train, threshold=threshold
         )
 
-        section(f"ETAPA 6.5: VERIFICANDO VIOLAÇÕES DAS DCs -- threshold={threshold}")
-        violacoes_treino = check_all_dcs(x_train_raw, global_dcs)
-        violacoes_teste = check_all_dcs(x_test_raw, global_dcs)
-        n_viol_treino = int(violacoes_treino["n_pares_violando"].sum())
-        n_viol_teste = int(violacoes_teste["n_pares_violando"].sum())
-        print(f"  Treino: {n_viol_treino} pares violando (somando as {len(global_dcs)} DCs)")
-        print(f"  Teste : {n_viol_teste} pares violando (somando as {len(global_dcs)} DCs)")
+        if check_violations:
+            section(f"ETAPA 6.5: VERIFICANDO VIOLAÇÕES DAS DCs -- threshold={threshold}")
+            violacoes_treino = check_all_dcs(x_train_raw, global_dcs)
+            violacoes_teste = check_all_dcs(x_test_raw, global_dcs)
+            n_viol_treino = int(violacoes_treino["n_pares_violando"].sum())
+            n_viol_teste = int(violacoes_teste["n_pares_violando"].sum())
+            print(f"  Treino: {n_viol_treino} pares violando (somando as {len(global_dcs)} DCs)")
+            print(f"  Teste : {n_viol_teste} pares violando (somando as {len(global_dcs)} DCs)")
+        else:
+            violacoes_treino = violacoes_teste = None
+            n_viol_treino = n_viol_teste = None
+            print("\n  Verificação de violações pulada (--skip-violation-check).")
 
         section(f"ETAPA 6.7: PREDIÇÃO COM FILTRO DE DCs (= e !=) -- threshold={threshold}")
         dc_filtered = run_dc_filtered_prediction(
@@ -190,21 +209,26 @@ def run_uci_experiment(uci_id, thresholds=settings.THRESHOLDS) -> list[dict]:
         section("ETAPA 7: SALVANDO RESULTADO")
         threshold_dir = _threshold_results_dir(uci_id, threshold)
 
-        support_path = threshold_dir / "dc_filter_support.json"
-        with open(support_path, "w", encoding="utf-8") as f:
-            json.dump(support, f, indent=2, ensure_ascii=False)
-        print(f"  Salvo em '{support_path}' ({len(global_dcs)} DCs globais)")
+        if save_support:
+            support_path = threshold_dir / "dc_filter_support.json"
+            with open(support_path, "w", encoding="utf-8") as f:
+                json.dump(support, f, indent=2, ensure_ascii=False)
+            print(f"  Suporte salvo em '{support_path}'")
+        else:
+            print("  Suporte não salvo (use --save-support para gravar dc_filter_support.json)")
+        print(f"  {len(global_dcs)} DCs globais")
 
-        violations_path = threshold_dir / "dc_violations.json"
-        with open(violations_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "treino": violacoes_treino.to_dict("records"),
-                    "teste": violacoes_teste.to_dict("records"),
-                },
-                f, indent=2, ensure_ascii=False,
-            )
-        print(f"  Violações de DC salvas em '{violations_path}'")
+        if check_violations:
+            violations_path = threshold_dir / "dc_violations.json"
+            with open(violations_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "treino": violacoes_treino.to_dict("records"),
+                        "teste": violacoes_teste.to_dict("records"),
+                    },
+                    f, indent=2, ensure_ascii=False,
+                )
+            print(f"  Violações de DC salvas em '{violations_path}'")
 
         result = {
             **base_result,

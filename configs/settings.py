@@ -21,11 +21,17 @@ for _dir in (RAW_DATA_DIR, INTERIM_DATA_DIR, RESULTS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 # ── LIMA (descoberta de Denial Constraints) ────────────────────
-# Pasta a partir da qual `java -jar ...` é executado. É nela que o LIMA
-# escreve `output.txt` ao final da execução.
+# Pasta usada só para localizar o JAR (JAR_RELATIVE_PATH é relativo a ela).
+# O Java NÃO roda mais aqui: cada execução usa uma pasta temporária, porque o
+# LIMA sempre escreve `output.txt` no diretório corrente. Assim a raiz do projeto
+# fica limpa e execuções simultâneas não sobrescrevem a saída uma da outra.
 LIMA_PROJECT_DIR = PROJECT_ROOT
 JAR_RELATIVE_PATH = "external/LIMA/target/LIMA-0.1.jar"  # relativo a LIMA_PROJECT_DIR
-OUTPUT_FILENAME = "output.txt"
+OUTPUT_FILENAME = "output.txt"  # nome fixo no código do LIMA
+
+# Heap máximo do Java (ex.: "6g", "12g"). None -> padrão da JVM (1/4 da RAM).
+# Aumente se aparecer a mensagem de falta de memória do LIMA.
+JAVA_XMX: str | None = None
 
 DEFAULT_THRESHOLD = 0.1
 THRESHOLDS = (0.01, 0.1, 0.5)
@@ -34,6 +40,16 @@ SEED = 42
 TARGET_COLUMN = None  # None para não incluir o rótulo no CSV do treino
 TIMEOUT_S = None  # sem limite por padrão (roda sobre o treino inteiro)
 DEBUG = True  # imprime stdout/stderr do Java e mantém o CSV gerado em data/interim
+
+# Grava `dc_filter_support.json` (suporte por folha/instância) em cada pasta de threshold.
+# Fica MUITO grande em datasets grandes, então o padrão é não gravar. Ligue com a flag
+# `--save-support` dos scripts, ou trocando aqui.
+SAVE_SUPPORT = False
+
+# Verificação de violações das DCs no treino/teste inteiros (ETAPA 6.5). É só
+# informativa -- não influencia as predições -- e custa tempo (quadrático em n).
+# Desligue com a flag `--skip-violation-check` dos scripts, ou trocando aqui.
+CHECK_VIOLATIONS = True
 
 # ── Random Forest ───────────────────────────────────────────────
 N_ESTIMATORS = 100

@@ -36,12 +36,27 @@ def parse_args() -> argparse.Namespace:
         default=list(settings.THRESHOLDS),
         help=f"Thresholds do LIMA a testar (padrão: {settings.THRESHOLDS}).",
     )
+    parser.add_argument(
+        "--save-support",
+        action="store_true",
+        help="Grava dc_filter_support.json por threshold (arquivo grande; padrão: não grava).",
+    )
+    parser.add_argument(
+        "--skip-violation-check",
+        action="store_true",
+        help="Pula a verificação de violações das DCs (ETAPA 6.5, só informativa).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run_uci_experiment(args.uci_id, thresholds=tuple(args.thresholds))
+    run_uci_experiment(
+        args.uci_id,
+        thresholds=tuple(args.thresholds),
+        save_support=args.save_support,
+        check_violations=not args.skip_violation_check,
+    )
 
 
 if __name__ == "__main__":

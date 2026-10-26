@@ -54,7 +54,7 @@ import pandas as pd
 
 # Extrai "Coluna(Tipo) OP Coluna(Tipo)" de dentro do "!( ... )"
 _PRED_RE = re.compile(
-    r"(\w+)\(\w+\)\s*(LE|LT|GT|GE|EQ|NE)\s*(\w+)\(\w+\)"
+    r"([\w.\-]+)\(\w+\)\s*(LE|LT|GT|GE|EQ|NE)\s*([\w.\-]+)\(\w+\)"
 )
 
 _OPS = {
@@ -65,6 +65,11 @@ _OPS = {
     "GT": np.greater,
     "GE": np.greater_equal,
 }
+
+
+# Linhas processadas por bloco em `count_violations`. A memória de pico é
+# ~ block_rows * n bytes por predicado (2000 x 26000 = ~52 MB), em vez de n * n.
+DEFAULT_BLOCK_ROWS = 2000
 
 
 @dataclass
@@ -98,6 +103,56 @@ class DenialConstraint:
         np.fill_diagonal(result, False)  # t1 != t2
         return result
 
+    def count_violations(
+        self,
+        df: pd.DataFrame,
+        max_examples: int = 20,
+        block_rows: int = DEFAULT_BLOCK_ROWS,
+    ) -> tuple[int, list[tuple]]:
+        """Conta os pares (i, j) que violam a DC e devolve também os primeiros
+        `max_examples` (na mesma ordem de `violating_pairs`).
+
+        Processa `block_rows` linhas de cada vez, então nunca monta a matriz
+        n x n inteira nem a lista com todos os pares: a memória cresce com
+        block_rows * n, e não com n * n. O resultado é igual ao de
+        `len(violating_pairs(df))` e `violating_pairs(df)[:max_examples]`.
+        """
+        n = len(df)
+        values = {
+            c: df[c].to_numpy()
+            for p in self.predicates
+            for c in (p.col_left, p.col_right)
+        }
+        total = 0
+        examples: list[tuple] = []
+
+        for start in range(0, n, block_rows):
+            stop = min(start + block_rows, n)
+            block = np.ones((stop - start, n), dtype=bool)
+            for pred in self.predicates:
+                a = values[pred.col_left][start:stop, None]
+                b = values[pred.col_right][None, :]
+                block &= _OPS[pred.op](a, b)
+            rows = np.arange(stop - start)
+            block[rows, start + rows] = False  # t1 != t2 (diagonal global)
+
+            total += int(np.count_nonzero(block))
+
+            if len(examples) < max_examples:
+                # Só olha as linhas que têm violação, na ordem, até completar.
+                for r in np.flatnonzero(block.any(axis=1)):
+                    for c in np.flatnonzero(block[r]):
+                        examples.append((
+                            self._to_native(df.index[start + r]),
+                            self._to_native(df.index[c]),
+                        ))
+                        if len(examples) >= max_examples:
+                            break
+                    if len(examples) >= max_examples:
+                        break
+
+        return total, examples
+
     def violating_pairs(self, df: pd.DataFrame) -> list[tuple]:
         matrix = self.violation_matrix(df)
         idx_i, idx_j = np.where(matrix)
@@ -130,18 +185,24 @@ def parse_dc(dc_str: str) -> DenialConstraint:
     return DenialConstraint(raw=dc_str, predicates=preds)
 
 
-def check_all_dcs(df: pd.DataFrame, dcs: list[str], max_pairs_shown: int = 20) -> pd.DataFrame:
+def check_all_dcs(
+    df: pd.DataFrame,
+    dcs: list[str],
+    max_pairs_shown: int = 20,
+    block_rows: int = DEFAULT_BLOCK_ROWS,
+) -> pd.DataFrame:
     """Para cada DC, conta quantos pares de linhas violam e devolve um
-    resumo tabular (uma linha por DC)."""
+    resumo tabular (uma linha por DC). Usa `count_violations` (em blocos de
+    `block_rows` linhas), então a memória não cresce com n * n."""
     rows = []
     for dc_str in dcs:
         dc = parse_dc(dc_str)
-        pairs = dc.violating_pairs(df)
+        n_pairs, examples = dc.count_violations(df, max_pairs_shown, block_rows)
         rows.append({
             "dc": dc_str,
             "predicados": " & ".join(str(p) for p in dc.predicates),
-            "n_pares_violando": len(pairs),
-            "exemplos_pares": pairs[:max_pairs_shown],
+            "n_pares_violando": n_pairs,
+            "exemplos_pares": examples,
         })
     # `columns` explícito: sem DCs, `pd.DataFrame([])` não teria colunas e
     # `resumo["n_pares_violando"]` levantaria KeyError.

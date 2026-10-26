@@ -27,7 +27,7 @@ from configs import settings
 # Regex para extrair nomes de coluna de uma linha de DC, ex:
 # "!(SingleExemp(Integer) NE SingleExemp(Integer) & MarriedExemp(Integer) GT ...)"
 # -> {"SingleExemp", "MarriedExemp", ...}
-_COLUMN_PATTERN = re.compile(r"(\w+)\(\w+\)")
+_COLUMN_PATTERN = re.compile(r"([\w.\-]+)\(\w+\)")
 
 
 def _lima_type(series: pd.Series) -> str:
@@ -50,49 +50,77 @@ def _extract_columns(dc: str) -> set[str]:
 
 
 def _run_lima(csv_path: Path, sample_size: int, threshold: float) -> list[str]:
-    """Executa o LIMA e lê as DCs do `output.txt` que ele escreve em
-    `settings.LIMA_PROJECT_DIR`."""
-    comando = [
-        "java", "-jar", settings.JAR_RELATIVE_PATH,
+    """Executa o LIMA e lê as DCs do `output.txt` que ele escreve.
+
+    O LIMA escreve `output.txt` no diretório corrente, então o Java roda numa
+    pasta temporária (apagada ao final) e o JAR é chamado por caminho absoluto.
+    """
+    if threshold <= 0:
+        print(
+            f"  [AVISO] threshold={threshold}: o LIMA calcula minGrad = threshold * 0.01, "
+            "e com 0 o critério de parada nunca é satisfeito (amostra todos os pares). "
+            "Em treinos grandes isso costuma estourar a memória do Java; "
+            "considere >= 1e-5."
+        )
+
+    jar_path = (settings.LIMA_PROJECT_DIR / settings.JAR_RELATIVE_PATH).resolve()
+    if not jar_path.exists():
+        raise FileNotFoundError(f"JAR do LIMA não encontrado em '{jar_path}'.")
+
+    comando = ["java"]
+    if settings.JAVA_XMX:
+        comando.append(f"-Xmx{settings.JAVA_XMX}")
+    comando += [
+        "-jar", str(jar_path),
         str(csv_path.resolve()), str(threshold), str(sample_size), str(settings.SEED),
     ]
 
-    output_path = settings.LIMA_PROJECT_DIR / settings.OUTPUT_FILENAME
+    with tempfile.TemporaryDirectory(prefix="lima_") as tmp:
+        run_dir = Path(tmp)
+        output_path = run_dir / settings.OUTPUT_FILENAME
 
-    if output_path.exists():
-        output_path.unlink()
+        if settings.DEBUG:
+            print(f"  [DEBUG] comando: {' '.join(comando)}")
+            print(f"  [DEBUG] cwd (temporário): {run_dir}")
 
-    if settings.DEBUG:
-        print(f"  [DEBUG] comando: {' '.join(comando)}")
-        print(f"  [DEBUG] cwd: {settings.LIMA_PROJECT_DIR}")
-
-    resultado = subprocess.run(
-        comando,
-        cwd=settings.LIMA_PROJECT_DIR,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=settings.TIMEOUT_S,
-    )
-
-    if settings.DEBUG:
-        print("  [DEBUG] --- stdout do Java ---")
-        print(resultado.stdout.strip() or "(vazio)")
-        print("  [DEBUG] --- stderr do Java ---")
-        print(resultado.stderr.strip() or "(vazio)")
-
-    if not output_path.exists():
-        raise RuntimeError(
-            f"LIMA rodou mas não gerou '{settings.OUTPUT_FILENAME}' em "
-            f"{settings.LIMA_PROJECT_DIR}. Veja o stdout/stderr acima "
-            f"(settings.DEBUG=True) para pistas."
+        resultado = subprocess.run(
+            comando,
+            cwd=run_dir,
+            capture_output=True,
+            text=True,
+            timeout=settings.TIMEOUT_S,
         )
 
-    dcs = [
-        line.strip()
-        for line in output_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+        if settings.DEBUG:
+            print("  [DEBUG] --- stdout do Java ---")
+            print(resultado.stdout.strip() or "(vazio)")
+            print("  [DEBUG] --- stderr do Java ---")
+            print(resultado.stderr.strip() or "(vazio)")
+
+        if resultado.returncode != 0:
+            if "OutOfMemoryError" in resultado.stderr:
+                raise RuntimeError(
+                    "O LIMA ficou sem memória (java.lang.OutOfMemoryError). Opções: "
+                    "aumentar o heap com settings.JAVA_XMX (ex.: '8g'), usar um "
+                    "threshold maior (evite 0) ou rodar sobre menos linhas "
+                    "(settings.SAMPLE_SIZE)."
+                )
+            raise RuntimeError(
+                f"O LIMA terminou com código {resultado.returncode}. "
+                f"Fim do stderr:\n{resultado.stderr.strip()[-1500:]}"
+            )
+
+        if not output_path.exists():
+            raise RuntimeError(
+                f"LIMA rodou mas não gerou '{settings.OUTPUT_FILENAME}'. Veja o "
+                "stdout/stderr (settings.DEBUG=True) para pistas."
+            )
+
+        dcs = [
+            line.strip()
+            for line in output_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
     if settings.DEBUG and not dcs:
         print(f"  [DEBUG] '{settings.OUTPUT_FILENAME}' foi gerado mas está vazio (0 DCs).")

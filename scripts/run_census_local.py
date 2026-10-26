@@ -39,6 +39,10 @@ ap.add_argument("--adult-data", required=True, help="caminho do adult.data")
 ap.add_argument("--n", type=int, default=0, help="amostra de linhas (0 = tudo)")
 ap.add_argument("--thresholds", type=float, nargs="+", required=True)
 ap.add_argument("--tag", default="census")
+ap.add_argument("--save-support", action="store_true",
+                help="grava dc_filter_support.json (arquivo grande)")
+ap.add_argument("--skip-violation-check", action="store_true",
+                help="pula a verificação de violações das DCs (ETAPA 6.5)")
 a = ap.parse_args()
 
 
@@ -59,4 +63,9 @@ pipeline.load_dataset = load_local_census
 settings.DEBUG = False
 settings.RESULTS_DIR = settings.PROJECT_ROOT / "results" / a.tag
 settings.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-pipeline.run_uci_experiment(a.tag, thresholds=tuple(a.thresholds))
+pipeline.run_uci_experiment(
+    a.tag,
+    thresholds=tuple(a.thresholds),
+    save_support=a.save_support,
+    check_violations=not a.skip_violation_check,
+)
