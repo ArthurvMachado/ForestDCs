@@ -33,7 +33,7 @@ SAMPLE_SIZE = None  # None -> usa len(x_train) automaticamente
 SEED = 42
 TARGET_COLUMN = None  # None para não incluir o rótulo no CSV do treino
 TIMEOUT_S = None  # sem limite por padrão (roda sobre o treino inteiro)
-DEBUG = False  # imprime stdout/stderr do Java e mantém o CSV gerado em data/interim
+DEBUG = True  # imprime stdout/stderr do Java e mantém o CSV gerado em data/interim
 
 # ── Random Forest ───────────────────────────────────────────────
 N_ESTIMATORS = 100
@@ -48,5 +48,18 @@ LABEL_NAMES = {0: "Não Alvo", 1: "Alvo"}
 DROP_COLUMNS: list[str] = []
 CATEGORICAL_COLUMNS: list[str] = []
 
+# ── Filtro de tuplas por DC (só predicados = e !=) ──────────────
+# Tolerância: uma tupla de treino é removida da folha se violar MAIS que
+# `max_violations` DCs junto com a instância classificada. 0 = qualquer
+# violação remove. Cada valor da grade gera uma rodada de predição.
+# (Não confundir com THRESHOLDS, que é o threshold de DC aproximada do LIMA.)
+DC_MAX_VIOLATIONS_GRID = (0, 1, 2)
+
+# O que fazer se TODAS as tuplas de uma folha forem removidas:
+#   "skip"          -> a árvore não vota para aquela instância
+#   "keep_original" -> a árvore mantém a distribuição original da folha
+DC_EMPTY_LEAF_POLICY = "skip"
+
 # ── Datasets UCI usados no lote (era o `ids` hardcoded em allUCIs.py) ──
-UCI_DATASET_IDS = (53, 109, 45, 42, 39, 850, 267, 545, 78)
+# UCI_DATASET_IDS = (53, 109, 45, 42, 39, 850, 267, 545, 78)
+UCI_DATASET_IDS = (2, 17, 52, 73, 94, 151, 222, 267, 350) # Somente Targets Binários

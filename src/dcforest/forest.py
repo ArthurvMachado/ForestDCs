@@ -60,6 +60,9 @@ class TraceableRandomForestClassifier(RandomForestClassifier):
         # Shape: (n_train, n_estimators)
         self._support_train_leaves_ = self.apply(X)
 
+        # Cache do índice folha -> posições de treino (ver `_leaf_position_index`).
+        self._leaf_index_cache_: dict[bool, list[dict[int, np.ndarray]]] = {}
+
         return self
 
     def predict(
@@ -505,6 +508,187 @@ class TraceableRandomForestClassifier(RandomForestClassifier):
             all_support.append(sample_support)
 
         return all_support
+
+    # ------------------------------------------------------------------
+    # Agregação com filtro de DCs
+    # ------------------------------------------------------------------
+    # Como o scikit-learn agrega: `RandomForestClassifier.predict_proba` é a
+    # MÉDIA, sobre as árvores, de `tree.predict_proba(x)`. Para uma árvore,
+    # isso é a distribuição de classes da folha onde x cai, e essa
+    # distribuição é a contagem ponderada de treino na folha, com peso =
+    # nº de vezes que cada tupla foi sorteada no bootstrap. `predict` é o
+    # argmax dessa média (soft voting; não é voto majoritário de rótulos).
+    #
+    # Logo, a forma de "interceptar tuplas" é recomputar, por folha, essa
+    # contagem sem as tuplas removidas e só então fazer a média.
+
+    def _leaf_position_index(self, inbag_only: bool = True) -> list[dict[int, np.ndarray]]:
+        """Por árvore: leaf_id -> posições de treino naquela folha.
+
+        Com `inbag_only=True`, as posições vêm de `estimators_samples_` COM
+        repetição (uma entrada por sorteio do bootstrap), então `bincount`
+        sobre os rótulos reproduz exatamente os pesos que o sklearn usou.
+        """
+        check_is_fitted(self, attributes=["estimators_", "_support_train_leaves_"])
+
+        cache = getattr(self, "_leaf_index_cache_", None)
+        if cache is None:
+            cache = self._leaf_index_cache_ = {}
+        if inbag_only in cache:
+            return cache[inbag_only]
+
+        samples = self.estimators_samples_ if inbag_only else None
+        index: list[dict[int, np.ndarray]] = []
+
+        for tree_id in range(len(self.estimators_)):
+            if inbag_only:
+                positions = np.asarray(samples[tree_id])
+            else:
+                positions = np.arange(len(self._support_train_ids_))
+
+            leaf_ids = self._support_train_leaves_[positions, tree_id]
+            order = np.argsort(leaf_ids, kind="stable")
+            sorted_leaf_ids = leaf_ids[order]
+            sorted_positions = positions[order]
+
+            unique_leaves, start_idx = np.unique(sorted_leaf_ids, return_index=True)
+            groups = np.split(sorted_positions, start_idx[1:])
+            index.append(dict(zip(unique_leaves.tolist(), groups)))
+
+        cache[inbag_only] = index
+        return index
+
+    def predict_proba_dc_filtered(
+        self,
+        X: Any,
+        removed_positions_fn,
+        *,
+        inbag_only: bool = True,
+        empty_leaf_policy: str = "skip",
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        """
+        predict_proba da floresta, mas removendo de cada folha as tuplas de
+        treino indicadas por `removed_positions_fn(sample_pos)`.
+
+        Parâmetros
+        ----------
+        X : mesmas features (codificadas) usadas no fit.
+        removed_positions_fn : callable `sample_pos -> array de posições de
+            treino` a remover para aquela amostra (posições na ordem do X do
+            fit). Ex.: `DCViolationFilter.removal_fn(x_test_raw)`.
+        empty_leaf_policy : o que fazer quando TODAS as tuplas da folha são
+            removidas.
+              "skip"          -> a árvore não vota para essa amostra (média só
+                                 entre as árvores com evidência restante);
+              "keep_original" -> a árvore mantém a distribuição original.
+            Se nenhuma árvore sobrar, a amostra usa o predict_proba original.
+
+        Retorna (proba, stats). `stats` tem, por amostra:
+          n_removed_total : tuplas removidas somando as folhas de todas as árvores
+          n_trees_empty   : árvores cuja folha esvaziou
+          n_trees_changed : árvores cuja distribuição mudou
+          fell_back       : True se usou o predict_proba original
+        """
+        check_is_fitted(
+            self,
+            attributes=["estimators_", "_support_y_train_", "_support_train_leaves_"],
+        )
+        if empty_leaf_policy not in ("skip", "keep_original"):
+            raise ValueError("empty_leaf_policy deve ser 'skip' ou 'keep_original'.")
+
+        leaf_index = self._leaf_position_index(inbag_only)
+        n_classes = len(self.classes_)
+        n_train = len(self._support_train_ids_)
+        y_idx = np.searchsorted(self.classes_, self._support_y_train_)
+
+        test_leaves = self.apply(X)  # (n_test, n_estimators)
+        n_test, n_est = test_leaves.shape
+        original_proba = super().predict_proba(X)
+
+        proba = np.zeros((n_test, n_classes))
+        n_removed_total = np.zeros(n_test, dtype=np.int64)
+        n_trees_empty = np.zeros(n_test, dtype=np.int64)
+        n_trees_changed = np.zeros(n_test, dtype=np.int64)
+        fell_back = np.zeros(n_test, dtype=bool)
+
+        empty = np.array([], dtype=np.intp)
+        scratch = np.zeros(n_train, dtype=bool)  # máscara reutilizada entre amostras
+        leaf_counts: dict[tuple[int, int], np.ndarray] = {}  # (árvore, folha) -> contagem original
+
+        for i in range(n_test):
+            removed = np.asarray(removed_positions_fn(i), dtype=np.intp)
+            if len(removed):
+                scratch[removed] = True
+
+            acc = np.zeros(n_classes)
+            n_voting = 0
+
+            for t in range(n_est):
+                leaf = int(test_leaves[i, t])
+                pos = leaf_index[t].get(leaf, empty)
+
+                key = (t, leaf)
+                base = leaf_counts.get(key)
+                if base is None:
+                    base = np.bincount(y_idx[pos], minlength=n_classes).astype(float)
+                    leaf_counts[key] = base
+
+                counts = base
+                if len(removed) and len(pos):
+                    kept = pos[~scratch[pos]]
+                    if len(kept) != len(pos):
+                        counts = np.bincount(y_idx[kept], minlength=n_classes).astype(float)
+                        n_removed_total[i] += len(pos) - len(kept)
+                        n_trees_changed[i] += 1
+
+                total = counts.sum()
+                if total > 0:
+                    acc += counts / total
+                    n_voting += 1
+                else:
+                    n_trees_empty[i] += 1
+                    if empty_leaf_policy == "keep_original":
+                        orig = self.estimators_[t].tree_.value[leaf, 0, :]
+                        acc += orig / orig.sum()
+                        n_voting += 1
+
+            if len(removed):
+                scratch[removed] = False
+
+            if n_voting == 0:
+                proba[i] = original_proba[i]
+                fell_back[i] = True
+            else:
+                proba[i] = acc / n_voting
+
+        stats = {
+            "n_removed_total": n_removed_total,
+            "n_trees_empty": n_trees_empty,
+            "n_trees_changed": n_trees_changed,
+            "fell_back": fell_back,
+        }
+        return proba, stats
+
+    def predict_dc_filtered(
+        self,
+        X: Any,
+        removed_positions_fn,
+        *,
+        inbag_only: bool = True,
+        empty_leaf_policy: str = "skip",
+        return_stats: bool = False,
+    ):
+        """Predição (argmax da média) com tuplas removidas das folhas."""
+        proba, stats = self.predict_proba_dc_filtered(
+            X,
+            removed_positions_fn,
+            inbag_only=inbag_only,
+            empty_leaf_policy=empty_leaf_policy,
+        )
+        y_pred = self.classes_.take(np.argmax(proba, axis=1))
+        if return_stats:
+            return y_pred, stats
+        return y_pred
 
     @staticmethod
     def print_prediction_support(

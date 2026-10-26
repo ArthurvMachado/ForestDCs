@@ -102,10 +102,10 @@ def split_dataset(x_raw: pd.DataFrame, x_encoded: pd.DataFrame, y: pd.Series):
  
     x_train_raw = x_raw.loc[idx_train]
     x_train_encoded = x_encoded.loc[idx_train]
+    x_test_raw = x_raw.loc[idx_test]
     x_test_encoded = x_encoded.loc[idx_test]
     y_train = y.loc[idx_train]
     y_test = y.loc[idx_test]
  
     print(f"  Treino: {len(x_train_raw):,} | Teste: {len(x_test_encoded):,}")
-    return x_train_raw, x_train_encoded, x_test_encoded, y_train, y_test
- 
+    return x_train_raw, x_train_encoded, x_test_raw, x_test_encoded, y_train, y_test

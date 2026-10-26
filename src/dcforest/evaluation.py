@@ -12,20 +12,27 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from .data_loading import section
 
 
-def compute_metrics(y_test: pd.Series, y_pred) -> dict[str, float]:
-    """Calcula accuracy/precision/recall/F1 e imprime um resumo."""
-    section("ETAPA 8: RESULTADOS (fixos, independem do threshold)")
+def compute_metrics(
+    y_test: pd.Series,
+    y_pred,
+    title: str = "ETAPA 8: RESULTADOS (fixos, independem do threshold)",
+    verbose: bool = True,
+) -> dict[str, float]:
+    """Calcula accuracy/precision/recall/F1 e (opcionalmente) imprime um resumo."""
+    if verbose:
+        section(title)
 
     metrics = {
         "accuracy": accuracy_score(y_test, y_pred),
-        "precision": precision_score(y_test, y_pred),
-        "recall": recall_score(y_test, y_pred),
-        "f1_score": f1_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred, zero_division=0),
+        "recall": recall_score(y_test, y_pred, zero_division=0),
+        "f1_score": f1_score(y_test, y_pred, zero_division=0),
     }
 
-    print(f"  Acurácia  : {metrics['accuracy']:.4f}")
-    print(f"  Precisão  : {metrics['precision']:.4f}")
-    print(f"  Recall    : {metrics['recall']:.4f}")
-    print(f"  F1-Score  : {metrics['f1_score']:.4f}")
+    if verbose:
+        print(f"  Acurácia  : {metrics['accuracy']:.4f}")
+        print(f"  Precisão  : {metrics['precision']:.4f}")
+        print(f"  Recall    : {metrics['recall']:.4f}")
+        print(f"  F1-Score  : {metrics['f1_score']:.4f}")
 
     return metrics
