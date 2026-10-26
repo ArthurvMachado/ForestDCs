@@ -106,7 +106,10 @@ class DCViolationFilter:
 
             # Segurança: se algum predicado não casou com o regex (ex.: constante),
             # a DC ficaria "mais larga" do que é de verdade. Melhor descartar.
-            n_expected = dc_str.count("&") + 1
+            # O LIMA escreve "p1 & p2 & )" (há um "&" sobrando antes do ")"), então
+            # contar "&" + 1 superestima o nº de predicados. Contamos só os
+            # trechos não vazios entre os "&".
+            n_expected = sum(1 for part in dc_str.strip()[2:-1].split("&") if part.strip())
             if len(dc.predicates) != n_expected:
                 self.discarded.append((dc_str, "predicado não reconhecido"))
                 continue

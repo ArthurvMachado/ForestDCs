@@ -33,12 +33,8 @@ _COLUMN_PATTERN = re.compile(r"(\w+)\(\w+\)")
 def _lima_type(series: pd.Series) -> str:
     """Mapeia o dtype do pandas para a anotação de tipo que o LIMA espera
     no cabeçalho do CSV (ex: 'MaritalStatus(String)', 'Salary(Integer)')."""
-    if pd.api.types.is_bool_dtype(series):
-        return "String"
-    if pd.api.types.is_integer_dtype(series):
-        return "Integer"
-    if pd.api.types.is_float_dtype(series):
-        return "Double"
+    # Tudo como String: o LIMA só gera predicados EQ/NE (os únicos que o
+    # DCViolationFilter usa); com Integer/Double ele gera DCs de ordenação.
     return "String"
 
 

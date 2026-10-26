@@ -143,7 +143,11 @@ def check_all_dcs(df: pd.DataFrame, dcs: list[str], max_pairs_shown: int = 20) -
             "n_pares_violando": len(pairs),
             "exemplos_pares": pairs[:max_pairs_shown],
         })
-    return pd.DataFrame(rows)
+    # `columns` explícito: sem DCs, `pd.DataFrame([])` não teria colunas e
+    # `resumo["n_pares_violando"]` levantaria KeyError.
+    return pd.DataFrame(
+        rows, columns=["dc", "predicados", "n_pares_violando", "exemplos_pares"]
+    )
 
 
 if __name__ == "__main__":
